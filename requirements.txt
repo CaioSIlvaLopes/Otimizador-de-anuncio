@@ -1,0 +1,9 @@
+Django>=5.1,<6.0
+psycopg[binary]
+python-dotenv
+celery
+redis
+django-celery-beat
+cryptography
+pydantic>=2.0
+httpx
