@@ -13,7 +13,7 @@ app = Celery("core", broker=REDIS_URL, backend=REDIS_URL)
 # Carrega configurações prefixadas com CELERY_ do django.conf.settings
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
-# Garante isolamento explícito de filas e roteamento automático
+# Garante isolamento explícito de filas, roteamento automático e agendamento Beat
 app.conf.update(
     broker_url=REDIS_URL,
     result_backend=REDIS_URL,
@@ -25,6 +25,13 @@ app.conf.update(
     task_routes={
         "apps.media_studio.*": {"queue": "queue_media"},
         "*": {"queue": "queue_fast"},
+    },
+    beat_schedule={
+        "watcher-sync-active-accounts-every-10-min": {
+            "task": "apps.catalog.tasks.watch_all_active_accounts",
+            "schedule": 600.0,
+            "options": {"queue": "queue_fast"},
+        },
     },
     imports=("core.tasks",),
 )

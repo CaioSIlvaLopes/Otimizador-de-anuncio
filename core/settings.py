@@ -36,6 +36,13 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
+# Origens HTTPS confiáveis para túneis locais (ngrok / cloudflared) durante OAuth2
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 # Trava global de segurança (Regra Inviolável #2 - CONTEXTO_SISTEMA.md):
 # Enquanto False, nenhuma requisição POST/PUT/PATCH/DELETE de edição de anúncio pode ser enviada.
 MARKETPLACE_WRITE_ENABLED: bool = _env_bool("MARKETPLACE_WRITE_ENABLED", default=False)
