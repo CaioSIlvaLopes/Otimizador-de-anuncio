@@ -95,7 +95,10 @@ class GeminiStructuredClient:
                 "GEMINI_API_KEY não está configurada. Defina sua chave no arquivo .env."
             )
         if self._client is None:
-            self._client = genai.Client(api_key=self.api_key)
+            self._client = genai.Client(
+                api_key=self.api_key,
+                http_options=types.HttpOptions(api_version="v1beta"),
+            )
         return self._client
 
     def generate_structured(
