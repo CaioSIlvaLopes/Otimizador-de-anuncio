@@ -24,6 +24,7 @@ app.conf.update(
     ),
     task_routes={
         "apps.media_studio.*": {"queue": "queue_media"},
+        "apps.media_studio.tasks.*": {"queue": "queue_media"},
         "*": {"queue": "queue_fast"},
     },
     beat_schedule={

@@ -178,6 +178,14 @@ class DailyQuotaLog(models.Model):
         )
         self.refresh_from_db()
 
+    def record_media_job(self, count: int = 1) -> None:
+        """Incrementa atomicamente o contador diário de jobs de mídia executados."""
+        safe_count = max(1, int(count or 1))
+        type(self).objects.filter(pk=self.pk).update(
+            media_jobs_run=models.F("media_jobs_run") + safe_count,
+        )
+        self.refresh_from_db()
+
     def get_account_patches_count(self, account: MarketplaceAccount | int) -> int:
         """Retorna quantos patches foram enviados hoje para a conta especificada."""
         account_id = str(account.pk if hasattr(account, "pk") else account)

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Card Informativo — Benefícios</title>
+  <style>
+    /* Paleta Estrita: Escuro #0b0f19 / #111827 / #182030, Azul #3b82f6, Laranja #f97316, Branco #ffffff (Sem roxo/verde) */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      width: 1200px;
+      height: 1200px;
+      overflow: hidden;
+      background-color: #0b0f19;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 56px;
+    }
+    .card-header {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      border-bottom: 2px solid #263248;
+      padding-bottom: 28px;
+    }
+    .card-header__tag {
+      display: inline-block;
+      align-self: flex-start;
+      background-color: #f97316;
+      color: #ffffff;
+      font-size: 20px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 8px 20px;
+      border-radius: 999px;
+    }
+    .card-header__title {
+      font-size: 42px;
+      font-weight: 800;
+      line-height: 1.2;
+      color: #ffffff;
+    }
+    .card-body {
+      display: grid;
+      grid-template-columns: 480px 1fr;
+      gap: 44px;
+      align-items: center;
+      flex: 1;
+      margin: 32px 0;
+    }
+    .product-showcase {
+      width: 480px;
+      height: 760px;
+      background-color: #ffffff;
+      border: 4px solid #3b82f6;
+      border-radius: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 36px;
+    }
+    .product-showcase__img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .benefits-list {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .benefit-item {
+      background-color: #182030;
+      border: 2px solid #263248;
+      border-left: 8px solid #3b82f6;
+      border-radius: 18px;
+      padding: 26px 28px;
+      display: flex;
+      align-items: center;
+      gap: 22px;
+    }
+    .benefit-item__number {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background-color: #3b82f6;
+      color: #ffffff;
+      font-size: 26px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .benefit-item__text {
+      font-size: 28px;
+      font-weight: 700;
+      color: #ffffff;
+      line-height: 1.3;
+    }
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 2px solid #263248;
+      padding-top: 22px;
+      color: #cbd5e1;
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .card-footer__accent {
+      color: #3b82f6;
+      font-weight: 800;
+    }
+  </style>
+</head>
+<body>
+  <header class="card-header">
+    <span class="card-header__tag">Principais Diferenciais</span>
+    <h1 class="card-header__title">{{ product_title }}</h1>
+  </header>
+
+  <main class="card-body">
+    <div class="product-showcase">
+      <img src="{{ cutout_data_uri }}" alt="{{ product_title }}" class="product-showcase__img">
+    </div>
+
+    <div class="benefits-list">
+      {% for item in highlights %}
+      <div class="benefit-item">
+        <div class="benefit-item__number">0{{ forloop.counter }}</div>
+        <div class="benefit-item__text">{{ item }}</div>
+      </div>
+      {% empty %}
+      <div class="benefit-item">
+        <div class="benefit-item__number">01</div>
+        <div class="benefit-item__text">{{ product_type }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </main>
+
+  <footer class="card-footer">
+    <span>Especificações Verificadas</span>
+    <span class="card-footer__accent">{{ product_type }}</span>
+  </footer>
+</body>
+</html>

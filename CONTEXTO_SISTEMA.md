@@ -70,7 +70,9 @@ catalog_engine/
 ## 5. Estratégia de Filas Celery
 O processamento é estritamente isolado em **duas filas** para que tarefas pesadas de mídia não bloqueiem o monitoramento nem derrubem a VPS:
 * **`queue_fast`:** Watcher (Celery Beat), chamadas de API dos marketplaces, execução dos sub-agentes de texto e envio de patches.
-* **`queue_media`:** Remoção de fundo (`rembg`), renderização de cards (`Playwright`) e geração de vídeos (`FFmpeg`). Deve rodar com concorrência reduzida (`--concurrency=1` ou `2`).
+* **`queue_media`:** Remoção de fundo (`rembg`), renderização de cards (`Playwright`) e geração de vídeos (`FFmpeg`). Deve rodar com concorrência reduzida (`--concurrency=1` ou `2`):
+  * **Windows (Desenvolvimento):** `celery -A core worker -Q queue_media --concurrency=1 --pool=solo -l info`
+  * **Linux VPS (Produção):** `celery -A core worker -Q queue_media --concurrency=1 -l info`
 
 ---
 

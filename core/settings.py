@@ -177,8 +177,11 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# Modelo leve de remoção de fundo para CPU/VPS (u2netp = 4.7MB, baixo consumo de RAM)
+REMBG_MODEL_NAME = os.getenv("REMBG_MODEL_NAME", "u2netp")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -203,5 +206,6 @@ CELERY_TASK_QUEUES = (
 )
 CELERY_TASK_ROUTES = {
     "apps.media_studio.*": {"queue": "queue_media"},
+    "apps.media_studio.tasks.*": {"queue": "queue_media"},
     "*": {"queue": "queue_fast"},
 }

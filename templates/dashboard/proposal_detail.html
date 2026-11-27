@@ -217,6 +217,23 @@ Cenas: {{ video_script.scenes|join:" | " }}
 CTA: {{ video_script.cta }}</div>
       </div>
       {% endif %}
+
+      {% if proposal.media_assets_json.assets %}
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Ativos Gerados pelo Estúdio Local (1200x1200)</span>
+        </div>
+        <div class="thumb-grid">
+          {% for asset in proposal.media_assets_json.assets %}
+          {% if asset.url %}
+          <a href="{{ asset.url }}" target="_blank" title="{{ asset.label }} ({{ asset.width }}x{{ asset.height }})">
+            <img src="{{ asset.url }}" alt="{{ asset.label }}" class="thumb-grid__img">
+          </a>
+          {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
     </section>
   </div>
 
