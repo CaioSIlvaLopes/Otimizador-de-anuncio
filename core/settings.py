@@ -50,6 +50,8 @@ MARKETPLACE_WRITE_ENABLED: bool = _env_bool("MARKETPLACE_WRITE_ENABLED", default
 # Credenciais e chaves externas
 FERNET_KEY = os.getenv("FERNET_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DAILY_LLM_TOKEN_LIMIT = int(os.getenv("DAILY_LLM_TOKEN_LIMIT", "500000"))
 ML_CLIENT_ID = os.getenv("ML_CLIENT_ID", "")
 ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "")
 ML_REDIRECT_URI = os.getenv(

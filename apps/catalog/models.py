@@ -1,4 +1,4 @@
-"""Models do app catalog: Listing e ListingSnapshot (imutável)."""
+"""Models do app catalog: Listing, ListingSnapshot (imutável) e OptimizationProposal."""
 from typing import Any
 
 from django.db import models
@@ -13,6 +13,16 @@ class ListingStatus(models.TextChoices):
     PUBLISHED = "PUBLISHED", "Publicado"
     FAILED = "FAILED", "Falhou"
     IGNORED = "IGNORED", "Ignorado"
+
+
+class ProposalStatus(models.TextChoices):
+    """Estados de revisão e publicação de uma proposta de otimização."""
+
+    PENDING_REVIEW = "PENDING_REVIEW", "Aguardando Revisão"
+    APPROVED = "APPROVED", "Aprovada"
+    REJECTED = "REJECTED", "Rejeitada"
+    PUBLISHED = "PUBLISHED", "Publicada"
+    FAILED = "FAILED", "Falhou"
 
 
 class Listing(models.Model):
@@ -156,3 +166,90 @@ class ListingSnapshot(models.Model):
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Impede exclusão manual direta de um snapshot."""
         raise ValueError(self.IMMUTABLE_ERROR_MESSAGE)
+
+
+class OptimizationProposal(models.Model):
+    """Proposta de enriquecimento gerada pelos 4 sub-agentes vinculada ao snapshot baseline."""
+
+    listing = models.ForeignKey(
+        Listing,
+        on_delete=models.CASCADE,
+        related_name="proposals",
+        verbose_name="Anúncio",
+    )
+    baseline_snapshot = models.ForeignKey(
+        ListingSnapshot,
+        on_delete=models.PROTECT,
+        related_name="proposals",
+        verbose_name="Snapshot Baseline",
+    )
+    extracted_facts_json = models.JSONField(
+        "Fatos Extraídos (ExtractedFacts)",
+        default=dict,
+    )
+    proposed_title = models.CharField(
+        "Título Proposto",
+        max_length=255,
+    )
+    proposed_description = models.TextField(
+        "Descrição Proposta",
+    )
+    proposed_attributes_json = models.JSONField(
+        "Atributos Propostos",
+        default=list,
+    )
+    card_highlights_json = models.JSONField(
+        "Destaques para Cards (Infográficos)",
+        default=list,
+    )
+    video_script_json = models.JSONField(
+        "Roteiro de Vídeo",
+        default=dict,
+    )
+    media_assets_json = models.JSONField(
+        "Ativos de Mídia Gerados",
+        default=dict,
+        blank=True,
+    )
+    auditor_warnings = models.JSONField(
+        "Alertas do Auditor",
+        default=list,
+        blank=True,
+    )
+    confidence_score = models.PositiveSmallIntegerField(
+        "Nota de Confiança (0-100)",
+        default=0,
+    )
+    status = models.CharField(
+        "Status da Proposta",
+        max_length=30,
+        choices=ProposalStatus.choices,
+        default=ProposalStatus.PENDING_REVIEW,
+    )
+    llm_tokens_used = models.PositiveIntegerField(
+        "Tokens LLM Consumidos",
+        default=0,
+    )
+    error_message = models.TextField(
+        "Mensagem de Erro",
+        blank=True,
+    )
+    created_at = models.DateTimeField(
+        "Criado em",
+        auto_now_add=True,
+    )
+    updated_at = models.DateTimeField(
+        "Atualizado em",
+        auto_now=True,
+    )
+
+    class Meta:
+        verbose_name = "Proposta de Otimização"
+        verbose_name_plural = "Propostas de Otimização"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return (
+            f"Proposta #{self.pk} - {self.listing.external_id} "
+            f"(Score: {self.confidence_score}/100 - {self.status})"
+        )

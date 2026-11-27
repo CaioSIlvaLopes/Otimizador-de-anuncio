@@ -7,3 +7,4 @@ django-celery-beat
 cryptography
 pydantic>=2.0
 httpx
+google-genai

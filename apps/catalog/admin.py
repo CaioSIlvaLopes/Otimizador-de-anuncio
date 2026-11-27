@@ -1,11 +1,11 @@
-"""Configuração do Django Admin para Listing e ListingSnapshot (somente leitura)."""
+"""Configuração do Django Admin para Listing, ListingSnapshot e OptimizationProposal."""
 import json
 
 from django.contrib import admin
 from django.http import HttpRequest
 from django.utils.html import format_html
 
-from .models import Listing, ListingSnapshot
+from .models import Listing, ListingSnapshot, OptimizationProposal
 
 
 @admin.register(Listing)
@@ -99,3 +99,54 @@ class ListingSnapshotAdmin(admin.ModelAdmin):
     def formatted_category_attributes_json(self, obj: ListingSnapshot) -> str:
         pretty = json.dumps(obj.category_attributes_json, indent=2, ensure_ascii=False)
         return format_html("<pre style='max-height: 300px; overflow: auto;'>{}</pre>", pretty)
+
+
+@admin.register(OptimizationProposal)
+class OptimizationProposalAdmin(admin.ModelAdmin):
+    """Exibição detalhada das propostas de IA com nota de confiança e alertas do Auditor."""
+
+    list_display = (
+        "id",
+        "listing",
+        "proposed_title",
+        "confidence_badge",
+        "warnings_badge",
+        "status",
+        "llm_tokens_used",
+        "created_at",
+    )
+    list_filter = ("status", "listing__account")
+    search_fields = (
+        "listing__external_id",
+        "listing__sku_readonly",
+        "proposed_title",
+    )
+    readonly_fields = (
+        "confidence_badge",
+        "warnings_badge",
+        "llm_tokens_used",
+        "created_at",
+        "updated_at",
+    )
+
+    @admin.display(description="Nota do Auditor")
+    def confidence_badge(self, obj: OptimizationProposal) -> str:
+        if obj.confidence_score >= 80:
+            return format_html(
+                '<strong style="color: #3b82f6;">{}/100 (Alta)</strong>',
+                obj.confidence_score,
+            )
+        return format_html(
+            '<strong style="color: #f97316;">{}/100 (Revisão Manual)</strong>',
+            obj.confidence_score,
+        )
+
+    @admin.display(description="Alertas do Auditor")
+    def warnings_badge(self, obj: OptimizationProposal) -> str:
+        warnings = obj.auditor_warnings if isinstance(obj.auditor_warnings, list) else []
+        if not warnings:
+            return format_html('<span style="color: #3b82f6;">0 alertas</span>')
+        return format_html(
+            '<strong style="color: #f97316;">{} alerta(s)</strong>',
+            len(warnings),
+        )
