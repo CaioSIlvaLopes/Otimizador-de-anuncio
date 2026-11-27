@@ -98,3 +98,11 @@ O processamento é estritamente isolado em **duas filas** para que tarefas pesad
 3. Nunca hardcodar segredos, tokens ou chaves de API; usar `django-environ` ou `python-dotenv` via `.env`.
 4. Todo código novo de regra crítica (whitelist, circuit-breaker, criptografia, validação Pydantic) deve incluir testes unitários básicos.
 5. Manter docstrings e comentários curtos em português; nomes de arquivos, classes, variáveis e campos em inglês.
+
+---
+
+## 9. Status Atual de Execução (Sincronizado com `ROADMAP.md`)
+* **Progresso:** **15 de 23 itens concluídos (~65%)** — Fases 0 (exceto Item 3 externo), 1, 2, 3 (exceto Item 14 que depende do Item 3) e 4A (Itens 15, 16 e 17) concluídas.
+* **Testes Automatizados:** **46 testes passando** (`python manage.py test`).
+* **Trava Global:** `MARKETPLACE_WRITE_ENABLED=False` ativa por padrão.
+* **Próxima Etapa:** Fase 4B (Itens 18 e 19 — Pipeline de vídeo curto com `FFmpeg`/TTS/legendas e upload/preview de mídia).
