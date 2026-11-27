@@ -21,3 +21,11 @@ class MarketplaceAPIError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.response_body = response_body
+
+
+class ForbiddenPayloadFieldError(MarketplaceAPIError):
+    """Lançada quando o payload de patch contém campos protegidos da WeDrop (SKU, preço, estoque, variações)."""
+
+
+class DailyPatchQuotaExceededError(MarketplaceAPIError):
+    """Lançada quando a conta atinge o limite diário max_daily_patches configurado."""

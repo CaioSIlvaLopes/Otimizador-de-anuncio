@@ -1,7 +1,10 @@
-"""Tasks Celery do módulo catalog (Watcher e Otimização de Anúncio na fila queue_fast)."""
+"""Tasks Celery do módulo catalog (Watcher, Otimização e Publicação com Jitter na fila queue_fast)."""
+import random
+import time
 from typing import Any
 
 from celery import shared_task
+from django.conf import settings
 
 from apps.accounts_vault.models import MarketplaceAccount
 from apps.agents.pipeline import OptimizationPipelineService
@@ -11,7 +14,14 @@ from apps.catalog.models import (
     OptimizationProposal,
     ProposalStatus,
 )
+from apps.catalog.services.publisher import publish_proposal
 from apps.catalog.services.watcher import sync_account_listings
+from apps.marketplaces.exceptions import (
+    CircuitBreakerOpenError,
+    DailyPatchQuotaExceededError,
+    MarketplaceAPIError,
+    WriteDisabledError,
+)
 
 
 @shared_task(name="apps.catalog.tasks.watch_account_listings", queue="queue_fast")
@@ -102,5 +112,57 @@ def optimize_listing_task(listing_id: int) -> dict[str, Any]:
             "status": "failed",
             "listing_id": listing.pk,
             "external_id": listing.external_id,
+            "error": str(exc),
+        }
+
+
+@shared_task(name="apps.catalog.tasks.publish_proposal_task", queue="queue_fast")
+def publish_proposal_task(
+    proposal_id: int,
+    apply_jitter: bool = True,
+) -> dict[str, Any]:
+    """Publica uma proposta aprovada aplicando atraso aleatório (jitter) sem loops infinitos de retry."""
+    try:
+        proposal = OptimizationProposal.objects.select_related(
+            "listing",
+            "listing__account",
+        ).get(pk=proposal_id)
+    except OptimizationProposal.DoesNotExist:
+        return {
+            "status": "error",
+            "proposal_id": proposal_id,
+            "error": f"OptimizationProposal ID={proposal_id} não encontrada.",
+        }
+
+    jitter_applied = 0.0
+    if apply_jitter:
+        min_sec = int(getattr(settings, "PUBLISH_JITTER_MIN_SECONDS", 45))
+        max_sec = int(getattr(settings, "PUBLISH_JITTER_MAX_SECONDS", 150))
+        if max_sec >= min_sec > 0:
+            jitter_applied = round(random.uniform(min_sec, max_sec), 2)
+            time.sleep(jitter_applied)
+
+    try:
+        result = publish_proposal(proposal=proposal)
+        return {
+            "status": "published",
+            "proposal_id": proposal.pk,
+            "jitter_seconds": jitter_applied,
+            **result,
+        }
+    except (
+        WriteDisabledError,
+        CircuitBreakerOpenError,
+        DailyPatchQuotaExceededError,
+        MarketplaceAPIError,
+    ) as exc:
+        proposal.error_message = str(exc)
+        if not isinstance(exc, WriteDisabledError):
+            proposal.status = ProposalStatus.FAILED
+        proposal.save(update_fields=["status", "error_message", "updated_at"])
+        return {
+            "status": "blocked_or_failed",
+            "proposal_id": proposal.pk,
+            "jitter_seconds": jitter_applied,
             "error": str(exc),
         }

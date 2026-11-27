@@ -47,6 +47,10 @@ CSRF_TRUSTED_ORIGINS = [
 # Enquanto False, nenhuma requisição POST/PUT/PATCH/DELETE de edição de anúncio pode ser enviada.
 MARKETPLACE_WRITE_ENABLED: bool = _env_bool("MARKETPLACE_WRITE_ENABLED", default=False)
 
+# Intervalo de Pacing/Jitter aleatório (em segundos) para envios de patches em lote
+PUBLISH_JITTER_MIN_SECONDS = int(os.getenv("PUBLISH_JITTER_MIN_SECONDS", "45"))
+PUBLISH_JITTER_MAX_SECONDS = int(os.getenv("PUBLISH_JITTER_MAX_SECONDS", "150"))
+
 # Credenciais e chaves externas
 FERNET_KEY = os.getenv("FERNET_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

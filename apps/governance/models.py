@@ -1,7 +1,9 @@
 """Models de governança: PromptConfig (versionamento e blocklists) e DailyQuotaLog (orçamento diário)."""
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
+
+from apps.accounts_vault.models import MarketplaceAccount
 
 
 class AgentNameChoices(models.TextChoices):
@@ -175,3 +177,35 @@ class DailyQuotaLog(models.Model):
             llm_calls_count=models.F("llm_calls_count") + 1,
         )
         self.refresh_from_db()
+
+    def get_account_patches_count(self, account: MarketplaceAccount | int) -> int:
+        """Retorna quantos patches foram enviados hoje para a conta especificada."""
+        account_id = str(account.pk if hasattr(account, "pk") else account)
+        mapping = (
+            self.patches_sent_by_account
+            if isinstance(self.patches_sent_by_account, dict)
+            else {}
+        )
+        return int(mapping.get(account_id, 0) or 0)
+
+    def can_send_patch(self, account: MarketplaceAccount) -> bool:
+        """Verifica se a conta ainda possui saldo dentro de account.max_daily_patches hoje."""
+        self.refresh_from_db()
+        return self.get_account_patches_count(account) < int(account.max_daily_patches)
+
+    def record_patch_sent(self, account: MarketplaceAccount) -> int:
+        """Registra atomicamente o envio de 1 patch para a conta no dia atual."""
+        account_key = str(account.pk)
+        with transaction.atomic():
+            locked = type(self).objects.select_for_update().get(pk=self.pk)
+            mapping = (
+                dict(locked.patches_sent_by_account)
+                if isinstance(locked.patches_sent_by_account, dict)
+                else {}
+            )
+            new_count = int(mapping.get(account_key, 0) or 0) + 1
+            mapping[account_key] = new_count
+            locked.patches_sent_by_account = mapping
+            locked.save(update_fields=["patches_sent_by_account"])
+            self.patches_sent_by_account = mapping
+        return new_count

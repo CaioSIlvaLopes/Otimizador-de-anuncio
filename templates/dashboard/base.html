@@ -1,0 +1,60 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Painel de Revisão — Motor de Otimização{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'dashboard/css/dashboard.css' %}">
+</head>
+<body class="dashboard-page">
+  {% if not marketplace_write_enabled %}
+  <div class="safety-banner safety-banner--readonly" role="status">
+    <div class="safety-banner__title">
+      <span>[TRAVA DE SEGURANÇA] Modo Somente Leitura Ativo — Escrita em Marketplaces Bloqueada (MARKETPLACE_WRITE_ENABLED=False)</span>
+    </div>
+    <span>Apenas Simulações Dry-Run e Aprovações Locais estão liberadas.</span>
+  </div>
+  {% else %}
+  <div class="safety-banner safety-banner--writable" role="status">
+    <div class="safety-banner__title">
+      <span>Modo de Publicação Ativo (MARKETPLACE_WRITE_ENABLED=True) — Proteção de Whitelist WeDrop Habilitada</span>
+    </div>
+    <span>SKU, Preço, Estoque e Variações continuam estritamente bloqueados.</span>
+  </div>
+  {% endif %}
+
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div>
+        <a href="{% url 'dashboard:queue' %}" class="topbar__brand">
+          Catalog Engine
+          <span class="topbar__brand-tag">Watcher + Patch</span>
+        </a>
+      </div>
+      <nav class="topbar__nav">
+        <a href="{% url 'dashboard:queue' %}" class="topbar__link topbar__link--active">Fila de Revisão</a>
+        <a href="/admin/catalog/listing/" class="topbar__link">Anúncios &amp; Snapshots</a>
+        <a href="/admin/accounts_vault/marketplaceaccount/" class="topbar__link">Cofre de Contas</a>
+        <a href="/admin/governance/promptconfig/" class="topbar__link">Prompts &amp; Cotas</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="layout-container">
+    {% if messages %}
+    <ul class="flash-list">
+      {% for message in messages %}
+      <li class="flash-list__item {% if 'warning' in message.tags or 'error' in message.tags %}flash-list__item--warning{% endif %}">
+        {{ message }}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{% static 'dashboard/js/dashboard.js' %}"></script>
+</body>
+</html>

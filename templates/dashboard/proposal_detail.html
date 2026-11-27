@@ -1,0 +1,283 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Revisão #{{ proposal.pk }} ({{ listing.external_id }}) — Catalog Engine{% endblock %}
+
+{% block content %}
+<section class="proposal-header">
+  <div class="proposal-header__top">
+    <div>
+      <h1 style="margin: 0; font-size: 1.35rem;">
+        Revisão Antes vs Depois — {{ listing.external_id }}
+      </h1>
+      <div class="kpi-card__sub">
+        Loja: {{ listing.account.name }} ({{ listing.account.get_channel_display }}) |
+        Categoria: {{ listing.category_id|default:"N/A" }} |
+        Tokens consumidos: {{ proposal.llm_tokens_used }}
+      </div>
+    </div>
+    <div>
+      <a href="{% url 'dashboard:queue' %}" class="btn btn--outline-blue">&larr; Voltar para a Fila</a>
+    </div>
+  </div>
+
+  <div class="proposal-header__meta">
+    <span class="badge badge--blue">SKU WeDrop (Somente Leitura): {{ listing.sku_readonly|default:"N/A" }}</span>
+    {% if listing.sold_quantity > 0 %}
+    <span class="badge badge--orange">
+      {{ listing.sold_quantity }} venda(s) — Título será preservado automaticamente no Pre-Flight do Mercado Livre
+    </span>
+    {% else %}
+    <span class="badge badge--blue">0 vendas — Título editável (máx. 60 caracteres)</span>
+    {% endif %}
+    {% if proposal.confidence_score >= 80 %}
+    <span class="badge badge--blue">Nota do Auditor: {{ proposal.confidence_score }}/100</span>
+    {% else %}
+    <span class="badge badge--orange">Nota do Auditor: {{ proposal.confidence_score }}/100</span>
+    {% endif %}
+    <span class="badge {% if proposal.status == 'APPROVED' or proposal.status == 'PUBLISHED' %}badge--blue{% else %}badge--orange{% endif %}">
+      Status: {{ proposal.get_status_display }}
+    </span>
+  </div>
+</section>
+
+{% if proposal.auditor_warnings %}
+<section class="auditor-box" aria-label="Alertas do Auditor">
+  <h2 class="auditor-box__title">Alertas do Sub-Agente Auditor &amp; Travas Determinísticas ({{ proposal.auditor_warnings|length }})</h2>
+  <ul class="auditor-box__list">
+    {% for warn in proposal.auditor_warnings %}
+    <li>{{ warn }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if dry_run_result %}
+<section id="id-dryrun-panel" class="dryrun-panel" aria-label="Resultado da Simulação / Patch">
+  <div class="diff-field__header">
+    <strong style="color: #3b82f6;">
+      {% if dry_run_result.dry_run %}
+      Simulação Dry-Run (Payload Sanitizado pela Whitelist WeDrop)
+      {% else %}
+      Resultado da Operação Enviada
+      {% endif %}
+    </strong>
+    <button type="button" id="id-toggle-dryrun" class="btn btn--outline-blue">Ocultar / Exibir JSON</button>
+  </div>
+  {% if dry_run_result.preflight_warnings %}
+  <ul class="auditor-box__list" style="color: #f97316; margin-top: 0.5rem;">
+    {% for pwarn in dry_run_result.preflight_warnings %}
+    <li>{{ pwarn }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <pre class="dryrun-panel__pre">{{ dry_run_json_pretty }}</pre>
+</section>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+
+  <div class="diff-grid">
+    <!-- COLUNA ESQUERDA: SNAPSHOT ORIGINAL IMUTÁVEL -->
+    <section class="diff-column" aria-label="Estado Original Imutável">
+      <h2 class="diff-column__heading">
+        <span>Antes — Snapshot Original Imutável (#{{ baseline.pk }})</span>
+        <span class="badge badge--blue">Somente Leitura</span>
+      </h2>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Título Original ({{ original_title|length }} caracteres)</span>
+        </div>
+        <div class="diff-field__readonly-box">{{ original_title }}</div>
+      </div>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Descrição Original (Texto Bruto)</span>
+        </div>
+        <div class="diff-field__readonly-box">{{ original_description|default:"(Sem descrição)" }}</div>
+      </div>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Ficha Técnica Original ({{ original_attributes|length }} atributos)</span>
+        </div>
+        <div class="attr-list">
+          {% for attr in original_attributes %}
+          <div class="attr-row">
+            <div class="attr-row__name">{{ attr.name }} ({{ attr.id }})</div>
+            <div>{{ attr.value_name|default:"-" }}</div>
+          </div>
+          {% empty %}
+          <div class="diff-field__readonly-box">Nenhum atributo original registrado.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% if original_pictures %}
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Imagens Capturadas no Snapshot</span>
+        </div>
+        <div class="thumb-grid">
+          {% for pic_url in original_pictures %}
+          <img src="{{ pic_url }}" alt="Foto original" class="thumb-grid__img">
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </section>
+
+    <!-- COLUNA DIREITA: PROPOSTA DA IA (EDITÁVEL) -->
+    <section class="diff-column diff-column--proposal" aria-label="Proposta da IA Editável">
+      <h2 class="diff-column__heading">
+        <span>Depois — Proposta Otimizada (Editável)</span>
+        <span class="badge badge--blue">Whitelist Ativa</span>
+      </h2>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <label class="diff-field__label" for="id-proposed-title">
+            Título Proposto {% if listing.sold_quantity > 0 %}(Omitido no ML por sold_quantity &gt; 0){% endif %}
+          </label>
+          <span id="id-title-counter" class="diff-field__counter">
+            {{ proposal.proposed_title|length }}/60 caracteres
+          </span>
+        </div>
+        <input
+          type="text"
+          id="id-proposed-title"
+          name="proposed_title"
+          value="{{ proposal.proposed_title }}"
+          class="form-control"
+          maxlength="255"
+          required
+        >
+      </div>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <label class="diff-field__label" for="id-proposed-description">
+            Descrição Proposta (Texto Puro Escaneável)
+          </label>
+        </div>
+        <textarea
+          id="id-proposed-description"
+          name="proposed_description"
+          class="form-control form-control--textarea"
+          required
+        >{{ proposal.proposed_description }}</textarea>
+      </div>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Ficha Técnica Proposta (Sem SELLER_SKU)</span>
+        </div>
+        <div class="attr-list">
+          {% for attr in proposed_attributes %}
+          <div class="attr-row">
+            <div>
+              <div class="attr-row__name">{{ attr.name }} ({{ attr.id }})</div>
+              <div class="attr-row__evidence">Evidência: {{ attr.source_evidence }}</div>
+              <input type="hidden" name="attr_id" value="{{ attr.id }}">
+              <input type="hidden" name="attr_name" value="{{ attr.name }}">
+              <input type="hidden" name="attr_evidence" value="{{ attr.source_evidence }}">
+            </div>
+            <div>
+              <input
+                type="text"
+                name="attr_value"
+                value="{{ attr.value_name }}"
+                class="form-control"
+              >
+            </div>
+          </div>
+          {% empty %}
+          <div class="diff-field__readonly-box">Nenhum atributo técnico adicional proposto.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Destaques Preparados para Cards (Fase 4)</span>
+        </div>
+        <div class="diff-field__readonly-box">{% for hl in card_highlights %}• {{ hl }}
+{% empty %}Nenhum destaque registrado.{% endfor %}</div>
+      </div>
+
+      {% if video_script %}
+      <div class="diff-field">
+        <div class="diff-field__header">
+          <span class="diff-field__label">Roteiro de Vídeo Curto (Fase 4)</span>
+        </div>
+        <div class="diff-field__readonly-box">Hook: {{ video_script.hook }}
+Cenas: {{ video_script.scenes|join:" | " }}
+CTA: {{ video_script.cta }}</div>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <!-- BARRA DE AÇÕES -->
+  <section class="action-bar" aria-label="Ações de Revisão e Publicação">
+    <div class="action-bar__group">
+      <button type="submit" name="action" value="save_approve" class="btn btn--primary">
+        Salvar e Aprovar
+      </button>
+
+      <button type="submit" name="action" value="dry_run" class="btn btn--outline-blue">
+        Simular Patch (Dry-Run)
+      </button>
+
+      <button
+        type="submit"
+        name="action"
+        value="reject"
+        class="btn btn--outline-orange"
+        data-confirm="Confirmar rejeição desta proposta?"
+      >
+        Rejeitar Proposta
+      </button>
+    </div>
+
+    <div class="action-bar__group">
+      {% if marketplace_write_enabled %}
+      <button
+        type="submit"
+        name="action"
+        value="publish"
+        class="btn btn--primary"
+        data-confirm="Enviar PATCH de conteúdo ao vivo para o Mercado Livre?"
+      >
+        Publicar no Marketplace
+      </button>
+      {% else %}
+      <button
+        type="button"
+        class="btn btn--primary btn--disabled"
+        disabled
+        title="Bloqueado enquanto MARKETPLACE_WRITE_ENABLED=False. Use 'Simular Patch (Dry-Run)' para inspecionar o payload."
+      >
+        Publicar no Marketplace (Bloqueado: Somente Leitura)
+      </button>
+      {% endif %}
+
+      <button
+        type="submit"
+        name="action"
+        value="rollback"
+        class="btn btn--orange"
+        data-confirm="Restaurar o anúncio para o Snapshot Baseline original?"
+      >
+        {% if marketplace_write_enabled %}
+        Rollback para Snapshot Original
+        {% else %}
+        Simular Rollback (Dry-Run)
+        {% endif %}
+      </button>
+    </div>
+  </section>
+</form>
+{% endblock %}

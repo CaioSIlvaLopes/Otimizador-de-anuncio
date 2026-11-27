@@ -1,0 +1,144 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Fila de Revisão — Catalog Engine{% endblock %}
+
+{% block content %}
+<section class="kpi-grid" aria-label="Indicadores Operacionais">
+  <div class="kpi-card">
+    <span class="kpi-card__label">Aguardando Revisão</span>
+    <div class="kpi-card__value kpi-card__value--orange">{{ kpi.pending_review_count }}</div>
+    <div class="kpi-card__sub">Propostas geradas pela IA</div>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-card__label">Aprovados</span>
+    <div class="kpi-card__value kpi-card__value--blue">{{ kpi.approved_count }}</div>
+    <div class="kpi-card__sub">Prontos para envio</div>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-card__label">Publicados</span>
+    <div class="kpi-card__value kpi-card__value--blue">{{ kpi.published_count }}</div>
+    <div class="kpi-card__sub">Patches aplicados</div>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-card__label">Tokens LLM (Hoje)</span>
+    <div class="kpi-card__value">{{ kpi.tokens_today }}</div>
+    <div class="kpi-card__sub">Limite: {{ kpi.daily_token_limit }}</div>
+  </div>
+  <div class="kpi-card {% if kpi.circuit_breaker_accounts_count > 0 %}kpi-card--alert{% endif %}">
+    <span class="kpi-card__label">Circuit-Breaker</span>
+    <div class="kpi-card__value {% if kpi.circuit_breaker_accounts_count > 0 %}kpi-card__value--orange{% else %}kpi-card__value--blue{% endif %}">
+      {{ kpi.circuit_breaker_accounts_count }}
+    </div>
+    <div class="kpi-card__sub">Contas pausadas</div>
+  </div>
+</section>
+
+<section class="filter-bar" aria-label="Filtros da Fila">
+  <form method="get" class="filter-bar__form">
+    <div class="filter-bar__group">
+      <label class="filter-bar__label" for="id-filter-account">Conta / Loja</label>
+      <select id="id-filter-account" name="account" class="filter-bar__select">
+        <option value="">Todas as lojas</option>
+        {% for acc in accounts %}
+        <option value="{{ acc.pk }}" {% if selected_account == acc.pk|stringformat:"s" %}selected{% endif %}>
+          {{ acc.name }} ({{ acc.get_channel_display }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-bar__group">
+      <label class="filter-bar__label" for="id-filter-channel">Canal</label>
+      <select id="id-filter-channel" name="channel" class="filter-bar__select">
+        <option value="">Todos os canais</option>
+        {% for code, label in channel_choices %}
+        <option value="{{ code }}" {% if selected_channel == code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-bar__group">
+      <label class="filter-bar__label" for="id-filter-status">Status da Proposta</label>
+      <select id="id-filter-status" name="status" class="filter-bar__select">
+        <option value="">Todos os status</option>
+        {% for code, label in status_choices %}
+        <option value="{{ code }}" {% if selected_status == code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <button type="submit" class="btn btn--primary">Filtrar Fila</button>
+      <a href="{% url 'dashboard:queue' %}" class="btn btn--outline-blue">Limpar</a>
+    </div>
+  </form>
+</section>
+
+<section class="queue-panel">
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th class="queue-table__th">Anúncio / Loja</th>
+        <th class="queue-table__th">SKU WeDrop (Protegido)</th>
+        <th class="queue-table__th">Antes (Original) vs Depois (Proposto)</th>
+        <th class="queue-table__th">Vendas</th>
+        <th class="queue-table__th">Auditor IA</th>
+        <th class="queue-table__th">Status</th>
+        <th class="queue-table__th">Ação</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for prop in proposals %}
+      <tr class="queue-table__row">
+        <td class="queue-table__td">
+          <strong>{{ prop.listing.external_id }}</strong>
+          <div class="queue-table__title-orig">{{ prop.listing.account.name }}</div>
+        </td>
+        <td class="queue-table__td">
+          <span class="badge badge--blue">{{ prop.listing.sku_readonly|default:"Sem SKU" }}</span>
+        </td>
+        <td class="queue-table__td">
+          <div class="queue-table__title-orig">Antes: {{ prop.listing.original_title }}</div>
+          <div class="queue-table__title-prop">Depois: {{ prop.proposed_title }}</div>
+        </td>
+        <td class="queue-table__td">
+          {% if prop.listing.sold_quantity > 0 %}
+          <span class="badge badge--orange">{{ prop.listing.sold_quantity }} vendas (Título Travado)</span>
+          {% else %}
+          <span class="badge badge--blue">0 vendas (Editável)</span>
+          {% endif %}
+        </td>
+        <td class="queue-table__td">
+          {% if prop.confidence_score >= 80 %}
+          <span class="badge badge--blue">{{ prop.confidence_score }}/100</span>
+          {% else %}
+          <span class="badge badge--orange">{{ prop.confidence_score }}/100</span>
+          {% endif %}
+          {% if prop.auditor_warnings %}
+          <div class="kpi-card__sub">{{ prop.auditor_warnings|length }} alerta(s)</div>
+          {% endif %}
+        </td>
+        <td class="queue-table__td">
+          {% if prop.status == "APPROVED" or prop.status == "PUBLISHED" %}
+          <span class="badge badge--blue">{{ prop.get_status_display }}</span>
+          {% else %}
+          <span class="badge badge--orange">{{ prop.get_status_display }}</span>
+          {% endif %}
+        </td>
+        <td class="queue-table__td">
+          <a href="{% url 'dashboard:proposal_detail' prop.pk %}" class="btn btn--primary">
+            Revisar Lado a Lado
+          </a>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td class="queue-table__td" colspan="7">
+          Nenhuma proposta de otimização encontrada para os filtros selecionados.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

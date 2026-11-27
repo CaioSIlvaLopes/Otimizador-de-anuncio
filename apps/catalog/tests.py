@@ -1,23 +1,38 @@
-"""Testes unitários do app catalog (WatcherService, idempotência e imutabilidade de ListingSnapshot)."""
+"""Testes unitários do app catalog (WatcherService, Pre-Flight Check, Publicação, Cota Diária e Rollback)."""
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.accounts_vault.models import ChannelChoices, MarketplaceAccount
-from apps.catalog.models import Listing, ListingSnapshot, ListingStatus
+from apps.catalog.models import (
+    Listing,
+    ListingSnapshot,
+    ListingStatus,
+    OptimizationProposal,
+    ProposalStatus,
+)
+from apps.catalog.services.publisher import (
+    build_safe_patch_payload,
+    publish_proposal,
+    simulate_proposal_patch,
+)
+from apps.catalog.services.rollback import rollback_listing_to_baseline
 from apps.catalog.services.watcher import sync_account_listings
+from apps.governance.models import DailyQuotaLog
+from apps.marketplaces.exceptions import DailyPatchQuotaExceededError
 
 
 class CatalogWatcherAndSnapshotTests(TestCase):
-    """Suíte de testes da Fase 1 (Itens 6 e 7) para Listing, ListingSnapshot e Watcher."""
+    """Suíte de testes para Listing, ListingSnapshot, Watcher, Pre-Flight, Publisher e Rollback."""
 
     def setUp(self) -> None:
         self.account = MarketplaceAccount.objects.create(
             name="ML Principal WeDrop",
             channel=ChannelChoices.MERCADO_LIVRE,
             seller_id="99887766",
+            max_daily_patches=2,
             is_active=True,
         )
 
@@ -129,8 +144,6 @@ class CatalogWatcherAndSnapshotTests(TestCase):
         l2 = Listing.objects.get(external_id="MLB2002")
         self.assertEqual(l1.sku_readonly, "SKU-DIRECT-10")
         self.assertEqual(l2.sku_readonly, "SKU-ATTR-20")
-
-        # Verifica cache em memória: mesma categoria MLB555 consultada apenas 1 vez
         mock_adapter.get_category_attributes.assert_called_once_with("MLB555")
 
     @patch("apps.catalog.services.watcher.get_adapter_for_account")
@@ -163,7 +176,6 @@ class CatalogWatcherAndSnapshotTests(TestCase):
         self.assertEqual(first_run["detected"], 1)
         self.assertEqual(first_run["updated_existing"], 0)
 
-        # 2ª execução com sold_quantity=5 e status=paused
         mock_adapter.get_listing_details.side_effect = lambda _: second_payload
         second_run = sync_account_listings(self.account, limit=5)
         self.assertEqual(second_run["detected"], 0)
@@ -244,3 +256,160 @@ class CatalogWatcherAndSnapshotTests(TestCase):
         self.assertIn("Novos detectados: 1", output)
         self.assertIn("MLB5001", output)
         self.assertIn("WD-MOUSE-9", output)
+
+    def test_preflight_check_omits_title_when_sold_quantity_greater_than_zero(
+        self,
+    ) -> None:
+        """Pre-Flight Check deve remover automaticamente title quando sold_quantity > 0."""
+        listing = Listing.objects.create(
+            account=self.account,
+            external_id="MLB6001",
+            original_title="Fone Original",
+            sold_quantity=3,
+        )
+        snapshot = ListingSnapshot.objects.create(
+            listing=listing,
+            raw_item_json={"id": "MLB6001", "title": "Fone Original"},
+            raw_description_json={"plain_text": "Desc original"},
+            category_attributes_json=[],
+            is_baseline=True,
+        )
+        proposal = OptimizationProposal.objects.create(
+            listing=listing,
+            baseline_snapshot=snapshot,
+            proposed_title="Fone Bluetooth 5.3 TWS Esportivo",
+            proposed_description="Nova descrição otimizada.",
+            proposed_attributes_json=[
+                {"id": "BRAND", "name": "Marca", "value_name": "Genérica"}
+            ],
+        )
+
+        payload, warnings = build_safe_patch_payload(proposal)
+        self.assertNotIn("title", payload)
+        self.assertEqual(payload["description"], "Nova descrição otimizada.")
+        self.assertEqual(
+            payload["attributes"],
+            [{"id": "BRAND", "value_name": "Genérica"}],
+        )
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Título omitido automaticamente no Pre-Flight", warnings[0])
+
+        sim = simulate_proposal_patch(proposal)
+        self.assertTrue(sim["dry_run"])
+        self.assertNotIn("title", sim["payload"])
+
+    @override_settings(MARKETPLACE_WRITE_ENABLED=True)
+    @patch("apps.catalog.services.publisher.get_adapter_for_account")
+    def test_publish_proposal_enforces_max_daily_patches_quota(
+        self,
+        mock_get_adapter: MagicMock,
+    ) -> None:
+        """Deve bloquear envio quando a loja atingir max_daily_patches no DailyQuotaLog."""
+        listing = Listing.objects.create(
+            account=self.account,
+            external_id="MLB7001",
+            original_title="Produto Cota",
+            sold_quantity=0,
+        )
+        snapshot = ListingSnapshot.objects.create(
+            listing=listing,
+            raw_item_json={"id": "MLB7001", "title": "Produto Cota"},
+            raw_description_json={"plain_text": "Desc"},
+            category_attributes_json=[],
+            is_baseline=True,
+        )
+        proposal = OptimizationProposal.objects.create(
+            listing=listing,
+            baseline_snapshot=snapshot,
+            proposed_title="Produto Cota Otimizado",
+            proposed_description="Descrição nova",
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.get_listing_details.return_value = {
+            "id": "MLB7001",
+            "sold_quantity": 0,
+            "status": "active",
+        }
+        mock_adapter.patch_content.return_value = {"item_updated": True}
+        mock_get_adapter.return_value = mock_adapter
+
+        # max_daily_patches=2 na conta criada no setUp
+        publish_proposal(proposal)
+        publish_proposal(proposal)
+
+        quota = DailyQuotaLog.get_today()
+        self.assertEqual(quota.get_account_patches_count(self.account), 2)
+        self.assertFalse(quota.can_send_patch(self.account))
+
+        # 3ª tentativa no mesmo dia deve lançar DailyPatchQuotaExceededError
+        with self.assertRaises(DailyPatchQuotaExceededError):
+            publish_proposal(proposal)
+
+    @override_settings(MARKETPLACE_WRITE_ENABLED=True)
+    @patch("apps.catalog.services.rollback.get_adapter_for_account")
+    def test_rollback_listing_to_baseline_strips_forbidden_fields_and_respects_sold_quantity(
+        self,
+        mock_get_adapter: MagicMock,
+    ) -> None:
+        """Rollback deve restaurar snapshot baseline sem campos proibidos e respeitar sold_quantity > 0."""
+        listing = Listing.objects.create(
+            account=self.account,
+            external_id="MLB8001",
+            original_title="Título Original Baseline",
+            sold_quantity=4,
+            status=ListingStatus.PUBLISHED,
+        )
+        ListingSnapshot.objects.create(
+            listing=listing,
+            raw_item_json={
+                "id": "MLB8001",
+                "title": "Título Original Baseline",
+                "price": 99.90,
+                "available_quantity": 10,
+                "seller_custom_field": "WD-RB-01",
+                "attributes": [
+                    {"id": "BRAND", "value_name": "Marca Original"},
+                    {"id": "SELLER_SKU", "value_name": "WD-RB-01"},
+                    {"id": "RO_ATTR", "value_name": "Valor Read Only"},
+                ],
+            },
+            raw_description_json={"plain_text": "Descrição original baseline."},
+            category_attributes_json=[
+                {"id": "BRAND", "name": "Marca", "tags": {}},
+                {"id": "SELLER_SKU", "name": "SKU", "tags": {"hidden": True}},
+                {"id": "RO_ATTR", "name": "RO", "tags": {"read_only": True}},
+            ],
+            is_baseline=True,
+        )
+
+        # 1. Dry-run
+        dry = rollback_listing_to_baseline(listing, dry_run=True)
+        self.assertTrue(dry["dry_run"])
+        self.assertNotIn("title", dry["payload"])
+        self.assertNotIn("price", dry["payload"])
+        self.assertNotIn("seller_custom_field", dry["payload"])
+        self.assertEqual(
+            dry["payload"]["description"],
+            "Descrição original baseline.",
+        )
+        self.assertEqual(
+            dry["payload"]["attributes"],
+            [{"id": "BRAND", "value_name": "Marca Original"}],
+        )
+
+        # 2. Execução real com mock adapter
+        mock_adapter = MagicMock()
+        mock_adapter.get_listing_details.return_value = {
+            "id": "MLB8001",
+            "sold_quantity": 4,
+            "status": "active",
+        }
+        mock_adapter.patch_content.return_value = {"description_updated": True}
+        mock_get_adapter.return_value = mock_adapter
+
+        live_rb = rollback_listing_to_baseline(listing, dry_run=False)
+        self.assertFalse(live_rb["dry_run"])
+        listing.refresh_from_db()
+        self.assertEqual(listing.status, ListingStatus.DETECTED)
+        mock_adapter.patch_content.assert_called_once()

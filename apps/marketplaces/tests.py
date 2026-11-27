@@ -1,4 +1,4 @@
-"""Testes unitários do app marketplaces (MercadoLivreAdapter, trava de escrita e circuit-breaker)."""
+"""Testes unitários do app marketplaces (MercadoLivreAdapter, sanitizer WeDrop, patch_content e circuit-breaker)."""
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
@@ -10,10 +10,12 @@ from apps.accounts_vault.models import ChannelChoices, MarketplaceAccount
 
 from .exceptions import (
     CircuitBreakerOpenError,
+    ForbiddenPayloadFieldError,
     MarketplaceAPIError,
     WriteDisabledError,
 )
 from .mercadolivre import MercadoLivreAdapter
+from .sanitizer import sanitize_patch_payload
 
 TEST_FERNET_KEY = Fernet.generate_key().decode("utf-8")
 
@@ -26,7 +28,7 @@ TEST_FERNET_KEY = Fernet.generate_key().decode("utf-8")
     ML_REDIRECT_URI="http://localhost:8000/vault/ml/callback/",
 )
 class MercadoLivreAdapterTests(TestCase):
-    """Suíte de testes para o MercadoLivreAdapter sem chamadas reais à internet."""
+    """Suíte de testes para o MercadoLivreAdapter e sanitizador de whitelist WeDrop."""
 
     def setUp(self) -> None:
         self.account = MarketplaceAccount.objects.create(
@@ -41,6 +43,48 @@ class MercadoLivreAdapterTests(TestCase):
         )
         self.adapter = MercadoLivreAdapter(account=self.account)
 
+    def test_sanitize_patch_payload_blocks_forbidden_wedrop_fields(self) -> None:
+        """Deve lançar ForbiddenPayloadFieldError ao tentar enviar price, stock, variations ou SKU."""
+        for forbidden_key in (
+            "price",
+            "available_quantity",
+            "stock",
+            "variations",
+            "seller_custom_field",
+            "seller_sku",
+        ):
+            with self.assertRaises(ForbiddenPayloadFieldError):
+                sanitize_patch_payload(
+                    {
+                        "title": "Título Válido",
+                        forbidden_key: "valor-proibido",
+                    }
+                )
+
+    def test_sanitize_patch_payload_strips_seller_sku_and_non_whitelisted_keys(
+        self,
+    ) -> None:
+        """Deve remover SELLER_SKU de attributes e descartar chaves fora de ALLOWED_PATCH_FIELDS."""
+        raw = {
+            "title": "Mini Processador USB 250ml Inox",
+            "description": "Descrição limpa",
+            "extra_untrusted_field": "descartado",
+            "attributes": [
+                {"id": "BRAND", "value_name": "Genérica"},
+                {"id": "SELLER_SKU", "value_name": "WD-PROC-250"},
+            ],
+        }
+        cleaned = sanitize_patch_payload(raw)
+        self.assertEqual(
+            set(cleaned.keys()),
+            {"title", "description", "attributes"},
+        )
+        self.assertNotIn("extra_untrusted_field", cleaned)
+        self.assertEqual(
+            cleaned["attributes"],
+            [{"id": "BRAND", "value_name": "Genérica"}],
+        )
+
     def test_write_methods_raise_write_disabled_error_when_flag_is_false(self) -> None:
         """patch_content e upload_media devem lançar WriteDisabledError quando MARKETPLACE_WRITE_ENABLED=False."""
         with self.assertRaises(WriteDisabledError):
@@ -50,13 +94,59 @@ class MercadoLivreAdapterTests(TestCase):
             self.adapter.upload_media("/tmp/card.png")
 
     @override_settings(MARKETPLACE_WRITE_ENABLED=True)
-    def test_write_methods_raise_not_implemented_in_phase_1_when_enabled(self) -> None:
-        """Se MARKETPLACE_WRITE_ENABLED=True na Fase 1, deve lançar NotImplementedError (Fase 3)."""
-        with self.assertRaises(NotImplementedError):
-            self.adapter.patch_content("MLB123456", {"title": "Novo Título"})
+    @patch("apps.marketplaces.mercadolivre.httpx.Client")
+    def test_patch_content_dispatches_separate_put_requests_for_item_and_description(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Quando MARKETPLACE_WRITE_ENABLED=True, deve enviar PUT /items/{id} e PUT /items/{id}/description."""
+        put_item_resp = MagicMock()
+        put_item_resp.status_code = 200
+        put_item_resp.content = b'{"id": "MLB123456"}'
+        put_item_resp.json.return_value = {"id": "MLB123456"}
 
-        with self.assertRaises(NotImplementedError):
-            self.adapter.upload_media("/tmp/card.png")
+        put_desc_resp = MagicMock()
+        put_desc_resp.status_code = 200
+        put_desc_resp.content = b'{"plain_text": "Nova desc"}'
+        put_desc_resp.json.return_value = {"plain_text": "Nova desc"}
+
+        mock_http = MagicMock()
+        mock_http.put.side_effect = [put_item_resp, put_desc_resp]
+        mock_client_cls.return_value.__enter__.return_value = mock_http
+
+        result = self.adapter.patch_content(
+            "MLB123456",
+            {
+                "title": "Novo Título Otimizado",
+                "description": "Nova descrição em texto puro",
+                "attributes": [
+                    {"id": "BRAND", "value_name": "Genérica"},
+                    {"id": "SELLER_SKU", "value_name": "DEVE-SUMIR"},
+                ],
+            },
+        )
+
+        self.assertTrue(result["item_updated"])
+        self.assertTrue(result["description_updated"])
+        self.assertEqual(mock_http.put.call_count, 2)
+
+        first_call = mock_http.put.call_args_list[0]
+        self.assertEqual(first_call.args[0], "/items/MLB123456")
+        self.assertEqual(
+            first_call.kwargs["json"],
+            {
+                "title": "Novo Título Otimizado",
+                "attributes": [{"id": "BRAND", "value_name": "Genérica"}],
+            },
+        )
+        self.assertNotIn("description", first_call.kwargs["json"])
+
+        second_call = mock_http.put.call_args_list[1]
+        self.assertEqual(second_call.args[0], "/items/MLB123456/description")
+        self.assertEqual(
+            second_call.kwargs["json"],
+            {"plain_text": "Nova descrição em texto puro"},
+        )
 
     def test_blocked_when_circuit_breaker_is_open(self) -> None:
         """Nenhuma requisição pode ser disparada se is_paused_by_circuit_breaker=True."""
@@ -77,6 +167,7 @@ class MercadoLivreAdapterTests(TestCase):
         """Valida busca e parsing dos IDs de anúncios recentes."""
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.content = b'{"results": ["MLB100001", "MLB100002"]}'
         mock_response.json.return_value = {
             "seller_id": "11223344",
             "results": ["MLB100001", "MLB100002"],
@@ -100,6 +191,7 @@ class MercadoLivreAdapterTests(TestCase):
         """Valida consulta de detalhes do anúncio com include_attributes=all."""
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.content = b'{"id": "MLB100001"}'
         mock_response.json.return_value = {
             "id": "MLB100001",
             "title": "Fone Bluetooth TWS",
@@ -139,6 +231,7 @@ class MercadoLivreAdapterTests(TestCase):
 
         mock_200 = MagicMock()
         mock_200.status_code = 200
+        mock_200.content = b'{"plain_text": "Desc"}'
         mock_200.json.return_value = {"plain_text": "Descrição completa do produto."}
         mock_http.get.return_value = mock_200
 
@@ -150,6 +243,7 @@ class MercadoLivreAdapterTests(TestCase):
         """Valida consulta de atributos técnicos da categoria."""
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.content = b'[{"id": "BRAND"}]'
         mock_response.json.return_value = [
             {"id": "BRAND", "name": "Marca"},
             {"id": "MODEL", "name": "Modelo"},
@@ -183,7 +277,6 @@ class MercadoLivreAdapterTests(TestCase):
 
         self.assertTrue(self.account.is_paused_by_circuit_breaker)
 
-        # A 4ª tentativa deve ser barrada imediatamente pelo CircuitBreakerOpenError
         with self.assertRaises(CircuitBreakerOpenError):
             self.adapter.get_listing_details("MLB100001")
 
@@ -195,10 +288,12 @@ class MercadoLivreAdapterTests(TestCase):
         """Valida a saída do comando python manage.py test_ml_connection."""
         search_resp = MagicMock()
         search_resp.status_code = 200
+        search_resp.content = b'{"results": ["MLB999001"]}'
         search_resp.json.return_value = {"results": ["MLB999001"]}
 
         item_resp = MagicMock()
         item_resp.status_code = 200
+        item_resp.content = b'{"id": "MLB999001"}'
         item_resp.json.return_value = {
             "id": "MLB999001",
             "title": "Teclado Mecânico Gamer",

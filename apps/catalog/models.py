@@ -230,6 +230,16 @@ class OptimizationProposal(models.Model):
         "Tokens LLM Consumidos",
         default=0,
     )
+    last_patch_payload_json = models.JSONField(
+        "Último Payload Sanitizado",
+        default=dict,
+        blank=True,
+    )
+    published_at = models.DateTimeField(
+        "Publicado em",
+        null=True,
+        blank=True,
+    )
     error_message = models.TextField(
         "Mensagem de Erro",
         blank=True,
